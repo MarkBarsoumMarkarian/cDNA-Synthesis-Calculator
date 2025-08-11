@@ -1,0 +1,87 @@
+packages <- c("shiny", "bslib", "shinyWidgets", "shinyjs", "readxl")
+for(pkg in packages){
+  if(!requireNamespace(pkg, quietly = TRUE)){
+    install.packages(pkg, dependencies = TRUE)
+  }
+}
+
+# Load packages
+library(shiny)
+library(bslib)
+library(shinyWidgets)
+library(shinyjs)
+library(readxl)
+
+# Define UI
+theme <- bs_theme(bg = "#ffffff", fg = "#000000", primary = "#4CAF50")
+
+ui <- fluidPage(
+  theme = theme,
+  useShinyjs(),
+  titlePanel("cDNA Calculator"),
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("file", "Upload Excel File", accept = c(".xlsx")),
+      br(),
+      actionButton("print_all", "Print Tables Only", class = "btn-success")
+    ),
+    mainPanel(
+      div(
+        id = "print_area",  # We'll target this div for printing
+        h4("Sample Calculations"),
+        tableOutput("sample_table"),
+        br(),
+        h4("cDNA Synthesis Reaction Volumes (per sample)"),
+        tableOutput("reaction_table")
+      )
+    )
+  )
+)
+
+# Define Server
+server <- function(input, output, session) {
+  samples <- reactiveVal(data.frame())
+
+  observeEvent(input$file, {
+    req(input$file)
+    df <- read_excel(input$file$datapath)
+    if(!all(c("SampleName", "SampleNumber", "RNA_Concentration") %in% names(df))){
+      showNotification("Excel must have columns: SampleName, SampleNumber, RNA_Concentration", type = "error")
+      return(NULL)
+    }
+    df$RNA_Volume <- round((5 / df$RNA_Concentration) * 10, 2)
+    df$DEPC_Volume <- round(10 - df$RNA_Volume, 2)
+    samples(df)
+  })
+
+  output$sample_table <- renderTable({
+    req(samples())
+    samples()
+  }, striped = TRUE, bordered = TRUE, hover = TRUE)
+
+  reaction_data <- data.frame(
+    Component = c("5x SYBR RT Mix", "10x Reverse Transcriptase", "Unispike", "Nuclease-free water", "RNA"),
+    Volume_uL = c(2, 1, 0.5, 4.5, 2)
+  )
+
+  output$reaction_table <- renderTable({
+    reaction_data
+  }, striped = TRUE, bordered = TRUE, hover = TRUE)
+
+  observeEvent(input$print_all, {
+    runjs("
+      var printContents = document.getElementById('print_area').innerHTML;
+      var win = window.open('', '', 'height=700,width=900');
+      win.document.write('<html><head><title>cDNA Calculations</title>');
+      win.document.write('<style>table {border-collapse: collapse; width: 100%;} th, td {border: 1px solid #000; padding: 8px;}</style>');
+      win.document.write('</head><body>');
+      win.document.write(printContents);
+      win.document.write('</body></html>');
+      win.document.close();
+      win.print();
+    ")
+  })
+}
+
+# Run the app
+shinyApp(ui, server)
