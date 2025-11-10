@@ -193,8 +193,9 @@ server <- function(input, output, session) {
           scale_factor <- 1.5 / df$RNA_Volume[i]
           df$RNA_Volume[i] <- 1.5
           df$Total_Volume[i] <- df$Total_Volume[i] * scale_factor
-          df$Adjustment[i] <- "Scaled down"
+          df$Adjustment[i] <- "Scaled down (RNA > 1.5 µL)"
         }
+      }
       
       df$DEPC_Volume <- df$Total_Volume - df$RNA_Volume
       
