@@ -1,38 +1,151 @@
-packages <- c("shiny", "bslib", "shinyWidgets", "shinyjs", "readxl")
+# Install and load required packages
+packages <- c("shiny", "bslib", "shinyWidgets", "shinyjs", "readxl", "DT", "openxlsx")
 for(pkg in packages){
   if(!requireNamespace(pkg, quietly = TRUE)){
     install.packages(pkg, dependencies = TRUE)
   }
 }
 
-# Load packages
 library(shiny)
 library(bslib)
 library(shinyWidgets)
 library(shinyjs)
 library(readxl)
+library(DT)
+library(openxlsx)
+
+# Define modern theme
+theme <- bs_theme(
+  version = 5,
+  bg = "#ffffff",
+  fg = "#2c3e50",
+  primary = "#3498db",
+  secondary = "#95a5a6",
+  success = "#27ae60",
+  base_font = font_google("Inter"),
+  heading_font = font_google("Poppins", wght = c(400, 600))
+)
 
 # Define UI
-theme <- bs_theme(bg = "#ffffff", fg = "#000000", primary = "#4CAF50")
-
-ui <- fluidPage(
+ui <- page_fluid(
   theme = theme,
   useShinyjs(),
-  titlePanel("cDNA Calculator"),
-  sidebarLayout(
-    sidebarPanel(
-      fileInput("file", "Upload Excel File", accept = c(".xlsx")),
-      br(),
-      actionButton("print_all", "Print Tables Only", class = "btn-success")
-    ),
-    mainPanel(
+  
+  tags$head(
+    tags$style(HTML("
+      .app-title {
+        background: linear-gradient(135deg, #3498db 0%, #2ecc71 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 10px;
+        margin-bottom: 30px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+      }
+      .app-title h2 { margin: 0; font-weight: 600; }
+      .app-title p { margin: 10px 0 0 0; opacity: 0.95; font-size: 1.1em; }
+      .sidebar-card {
+        background: #f8f9fa; padding: 25px; border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+      }
+      .main-card {
+        background: white; padding: 30px; border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 25px;
+      }
+      .section-header {
+        color: #2c3e50; font-weight: 600; margin-bottom: 20px;
+        padding-bottom: 10px; border-bottom: 3px solid #3498db;
+      }
+      .info-box {
+        background: #e8f4f8; border-left: 4px solid #3498db;
+        padding: 15px; border-radius: 5px; margin-bottom: 20px;
+      }
+      .btn-print {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border: none; color: white; font-weight: 500;
+        padding: 12px 30px; border-radius: 8px; transition: transform 0.2s;
+      }
+      .btn-print:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+      }
+      @media print {
+        body * { visibility: hidden; }
+        #print_area, #print_area * { visibility: visible; }
+        #print_area { position: absolute; left: 0; top: 0; width: 100%; }
+        .no-print { display: none !important; }
+        table { width: 100%; border-collapse: collapse; page-break-inside: avoid; }
+        th, td { border: 1px solid #000; padding: 10px; text-align: left; }
+        th { background-color: #f0f0f0 !important; font-weight: bold; }
+        .section-header { color: #000; margin-top: 30px; page-break-after: avoid; }
+        h3 { page-break-after: avoid; }
+      }
+    "))
+  ),
+  
+  div(
+    class = "app-title",
+    h2("cDNA Calculator"),
+    p("Calculate RNA volumes and reaction components for cDNA synthesis")
+  ),
+  
+  layout_sidebar(
+    sidebar = sidebar(
+      class = "sidebar-card",
+      width = 350,
+      
+      h4("Upload Data", style = "color: #2c3e50; margin-bottom: 20px;"),
+      
       div(
-        id = "print_area",  # We'll target this div for printing
-        h4("Sample Calculations"),
-        tableOutput("sample_table"),
-        br(),
-        h4("cDNA Synthesis Reaction Volumes (per sample)"),
-        tableOutput("reaction_table")
+        class = "info-box",
+        icon("info-circle"),
+        strong(" Required columns:"),
+        tags$ul(
+          style = "margin-top: 10px; margin-bottom: 0;",
+          tags$li("SampleNumber"),
+          tags$li("RNA_Concentration")
+        )
+      ),
+      
+      fileInput(
+        "file",
+        NULL,
+        accept = c(".xlsx"),
+        buttonLabel = "Browse...",
+        placeholder = "No file selected"
+      ),
+      
+      hr(),
+      
+      actionButton(
+        "print_all",
+        "Print Tables",
+        class = "btn-print w-100",
+        icon = icon("print")
+      ),
+      
+      br(), br(),
+      
+      downloadButton(
+        "download_excel",
+        "Download Results",
+        class = "btn btn-success w-100"
+      )
+    ),
+    
+    div(
+      div(
+        class = "main-card",
+        id = "print_area",
+        
+        h3("Sample Calculations", class = "section-header"),
+        DTOutput("sample_table"),
+        
+        br(), br(),
+        
+        h3("cDNA Synthesis Reaction Volumes", class = "section-header"),
+        p(style = "color: #7f8c8d; margin-bottom: 20px;", 
+          "Standard reaction components per sample (total volume: 10 µL)"),
+        DTOutput("reaction_table")
       )
     )
   )
@@ -40,47 +153,171 @@ ui <- fluidPage(
 
 # Define Server
 server <- function(input, output, session) {
+  
   samples <- reactiveVal(data.frame())
-
+  
+  # Process uploaded file
   observeEvent(input$file, {
     req(input$file)
-    df <- read_excel(input$file$datapath)
-    if(!all(c("SampleName", "SampleNumber", "RNA_Concentration") %in% names(df))){
-      showNotification("Excel must have columns: SampleName, SampleNumber, RNA_Concentration", type = "error")
-      return(NULL)
-    }
-    df$RNA_Volume <- round((5 / df$RNA_Concentration) * 10, 2)
-    df$DEPC_Volume <- round(10 - df$RNA_Volume, 2)
-    samples(df)
+    
+    tryCatch({
+      df <- read_excel(input$file$datapath)
+      
+      required_cols <- c("SampleNumber", "RNA_Concentration")
+      if(!all(required_cols %in% names(df))){
+        showNotification(
+          "Excel must have columns: SampleNumber, RNA_Concentration",
+          type = "error",
+          duration = 5
+        )
+        return(NULL)
+      }
+      
+      # Remove SampleName column if exists
+      if("SampleName" %in% names(df)) {
+        df <- df[, !names(df) %in% "SampleName"]
+      }
+      
+      # Calculate RNA and DEPC volumes
+      df$RNA_Volume <- (5 / df$RNA_Concentration) * 10
+      df$Total_Volume <- 10
+      df$Adjustment <- "Normal"
+      
+      for (i in seq_len(nrow(df))) {
+        if (df$RNA_Volume[i] < 0.2) {
+          scale_factor <- 0.2 / df$RNA_Volume[i]
+          df$RNA_Volume[i] <- 0.2
+          df$Total_Volume[i] <- df$Total_Volume[i] * scale_factor
+          df$Adjustment[i] <- "Scaled up (RNA < 0.2 µL)"
+        } else if (df$RNA_Volume[i] > 1.5) {
+          scale_factor <- 1.5 / df$RNA_Volume[i]
+          df$RNA_Volume[i] <- 1.5
+          df$Total_Volume[i] <- df$Total_Volume[i] * scale_factor
+          df$Adjustment[i] <- "Scaled down"
+        }
+      
+      df$DEPC_Volume <- df$Total_Volume - df$RNA_Volume
+      
+      # Round
+      df$RNA_Volume <- round(df$RNA_Volume, 2)
+      df$DEPC_Volume <- round(df$DEPC_Volume, 2)
+      df$Total_Volume <- round(df$Total_Volume, 2)
+      
+      samples(df)
+      
+      showNotification(
+        paste("Successfully loaded", nrow(df), "samples!"),
+        type = "message",
+        duration = 3
+      )
+      
+    }, error = function(e) {
+      showNotification(
+        paste("Error reading file:", e$message),
+        type = "error",
+        duration = 5
+      )
+    })
   })
-
-  output$sample_table <- renderTable({
+  
+  # Render sample table
+  output$sample_table <- renderDT({
     req(samples())
-    samples()
-  }, striped = TRUE, bordered = TRUE, hover = TRUE)
-
+    
+    datatable(
+      samples(),
+      options = list(
+        pageLength = 15,
+        dom = 'ftp',
+        scrollX = TRUE,
+        columnDefs = list(list(className = 'dt-center', targets = "_all")),
+        language = list(search = "Search samples:", lengthMenu = "Show _MENU_ samples per page")
+      ),
+      rownames = FALSE,
+      class = 'cell-border stripe hover'
+    ) %>%
+      formatRound(columns = c('RNA_Concentration', 'RNA_Volume', 'DEPC_Volume', 'Total_Volume'), digits = 2)
+  })
+  
+  # Reaction table
   reaction_data <- data.frame(
     Component = c("5x SYBR RT Mix", "10x Reverse Transcriptase", "Unispike", "Nuclease-free water", "RNA"),
-    Volume_uL = c(2, 1, 0.5, 4.5, 2)
+    `Volume (µL)` = c(2.0, 1.0, 0.5, 4.5, 2.0),
+    check.names = FALSE
   )
-
-  output$reaction_table <- renderTable({
-    reaction_data
-  }, striped = TRUE, bordered = TRUE, hover = TRUE)
-
-  observeEvent(input$print_all, {
-    runjs("
-      var printContents = document.getElementById('print_area').innerHTML;
-      var win = window.open('', '', 'height=700,width=900');
-      win.document.write('<html><head><title>cDNA Calculations</title>');
-      win.document.write('<style>table {border-collapse: collapse; width: 100%;} th, td {border: 1px solid #000; padding: 8px;}</style>');
-      win.document.write('</head><body>');
-      win.document.write(printContents);
-      win.document.write('</body></html>');
-      win.document.close();
-      win.print();
-    ")
+  
+  output$reaction_table <- renderDT({
+    datatable(
+      reaction_data,
+      options = list(dom = 't', ordering = FALSE, columnDefs = list(list(className = 'dt-center', targets = 1))),
+      rownames = FALSE,
+      class = 'cell-border stripe'
+    ) %>%
+      formatRound(columns = 'Volume (µL)', digits = 1)
   })
+  
+  # Print functionality
+  observeEvent(input$print_all, {
+    req(samples())
+    
+    sample_html <- paste0(
+      "<h3 style='color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px;'>Sample Calculations</h3>",
+      "<table style='width: 100%; border-collapse: collapse; margin-bottom: 40px;'>",
+      "<thead><tr>",
+      paste0("<th style='border: 1px solid #000; padding: 10px; background: #f0f0f0;'>", 
+             names(samples()), "</th>", collapse = ""),
+      "</tr></thead><tbody>",
+      paste0(apply(samples(), 1, function(row) {
+        paste0("<tr>", 
+               paste0("<td style='border: 1px solid #000; padding: 8px; text-align: center;'>", 
+                      row, "</td>", collapse = ""),
+               "</tr>")
+      }), collapse = ""),
+      "</tbody></table>"
+    )
+    
+    reaction_html <- paste0(
+      "<h3 style='color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px;'>cDNA Synthesis Reaction Volumes</h3>",
+      "<p style='color: #7f8c8d; margin-bottom: 20px;'>Standard reaction components per sample (total volume: 10 µL)</p>",
+      "<table style='width: 100%; border-collapse: collapse;'>",
+      "<thead><tr>",
+      "<th style='border: 1px solid #000; padding: 10px; background: #f0f0f0;'>Component</th>",
+      "<th style='border: 1px solid #000; padding: 10px; background: #f0f0f0;'>Volume (µL)</th>",
+      "</tr></thead><tbody>",
+      paste0(apply(reaction_data, 1, function(row) {
+        paste0("<tr><td style='border: 1px solid #000; padding: 8px;'>", row[1], 
+               "</td><td style='border: 1px solid #000; padding: 8px; text-align: center;'>", 
+               row[2], "</td></tr>")
+      }), collapse = ""),
+      "</tbody></table>"
+    )
+    
+    runjs(paste0("
+      var printWindow = window.open('', '', 'height=800,width=1000');
+      printWindow.document.write('<html><head><title>cDNA Calculations</title>');
+      printWindow.document.write('<style>body { font-family: Arial, sans-serif; padding: 20px; } table { page-break-inside: avoid; } h3 { page-break-after: avoid; margin-top: 30px; }</style></head><body>');
+      printWindow.document.write('", gsub("'", "\\\\'", sample_html), "');
+      printWindow.document.write('", gsub("'", "\\\\'", reaction_html), "');
+      printWindow.document.write('</body></html>');
+      printWindow.document.close();
+      printWindow.focus();
+      setTimeout(function() { printWindow.print(); }, 250);
+    "))
+  })
+  
+  # Download Excel
+  output$download_excel <- downloadHandler(
+    filename = function() paste0("cDNA_calculations_", format(Sys.Date(), "%Y%m%d"), ".xlsx"),
+    content = function(file) {
+      req(samples())
+      wb <- createWorkbook()
+      addWorksheet(wb, "Sample Calculations")
+      writeData(wb, "Sample Calculations", samples())
+      addWorksheet(wb, "Reaction Volumes")
+      writeData(wb, "Reaction Volumes", reaction_data)
+      saveWorkbook(wb, file, overwrite = TRUE)
+    }
+  )
 }
 
 # Run the app
