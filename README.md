@@ -207,7 +207,7 @@ If you use this tool in your research, please cite:
 
 ```
 cDNA Calculator (2024). Version 1.0.0.
-Available at: https://github.com/markbarsoummarkarian/cdna-calculator
+Available at: https://github.com/markbarsoummarkarian/cdna-synthesis-calculator
 ```
 
 ---
