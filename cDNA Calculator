@@ -138,6 +138,8 @@ ui <- page_fluid(
         id = "print_area",
         
         h3("Sample Calculations", class = "section-header"),
+        p(style = "color: #7f8c8d; margin-bottom: 15px;",
+          HTML("<b>Note:</b> Total volume automatically adjusted (10-100µL in 10µL increments) to keep RNA volume between 0.3-1.5µL for accurate pipetting. Samples that cannot reach 0.3µL even at maximum volume are capped at 30µL.")),
         DTOutput("sample_table"),
         
         br(), br(),
@@ -178,31 +180,39 @@ server <- function(input, output, session) {
         df <- df[, !names(df) %in% "SampleName"]
       }
       
-      # Calculate RNA and DEPC volumes
-      df$RNA_Volume <- (5 / df$RNA_Concentration) * 10
+      # Calculate initial RNA volume for 10µL total
       df$Total_Volume <- 10
-      df$Adjustment <- "Normal"
       
+      # Adjust total volume based on RNA concentration ranges
       for (i in seq_len(nrow(df))) {
-        if (df$RNA_Volume[i] < 0.2) {
-          scale_factor <- 0.2 / df$RNA_Volume[i]
-          df$RNA_Volume[i] <- 0.2
-          df$Total_Volume[i] <- df$Total_Volume[i] * scale_factor
-          df$Adjustment[i] <- "Scaled up (RNA < 0.2 µL)"
-        } else if (df$RNA_Volume[i] > 1.5) {
-          scale_factor <- 1.5 / df$RNA_Volume[i]
-          df$RNA_Volume[i] <- 1.5
-          df$Total_Volume[i] <- df$Total_Volume[i] * scale_factor
-          df$Adjustment[i] <- "Scaled down (RNA > 1.5 µL)"
+        conc <- df$RNA_Concentration[i]
+        
+        if (conc >= 0 && conc < 100) {
+          df$Total_Volume[i] <- 5
+        } else if (conc >= 100 && conc < 165) {
+          df$Total_Volume[i] <- 10
+        } else if (conc >= 165 && conc < 600) {
+          df$Total_Volume[i] <- 20
+        } else if (conc >= 600 && conc < 800) {
+          df$Total_Volume[i] <- 30
+        } else if (conc >= 800 && conc < 1200) {
+          df$Total_Volume[i] <- 40
+        } else {
+          # For concentrations >= 1200, use 50µL
+          df$Total_Volume[i] <- 50
         }
       }
       
+      # Calculate actual RNA volume with adjusted total
+      df$RNA_Volume <- (5 / df$RNA_Concentration) * df$Total_Volume
       df$DEPC_Volume <- df$Total_Volume - df$RNA_Volume
       
       # Round
       df$RNA_Volume <- round(df$RNA_Volume, 2)
       df$DEPC_Volume <- round(df$DEPC_Volume, 2)
-      df$Total_Volume <- round(df$Total_Volume, 2)
+      
+      # Select final columns
+      df <- df[, c("SampleNumber", "RNA_Concentration", "Total_Volume", "RNA_Volume", "DEPC_Volume")]
       
       samples(df)
       
@@ -237,7 +247,12 @@ server <- function(input, output, session) {
       rownames = FALSE,
       class = 'cell-border stripe hover'
     ) %>%
-      formatRound(columns = c('RNA_Concentration', 'RNA_Volume', 'DEPC_Volume', 'Total_Volume'), digits = 2)
+      formatRound(columns = c('RNA_Concentration', 'RNA_Volume', 'DEPC_Volume'), digits = 2) %>%
+      formatStyle(
+        'Total_Volume',
+        backgroundColor = styleEqual(c(10, 20, 30), c('#ffffff', '#fff3cd', '#f8d7da')),
+        fontWeight = styleEqual(c(20, 30), c('bold', 'bold'))
+      )
   })
   
   # Reaction table
